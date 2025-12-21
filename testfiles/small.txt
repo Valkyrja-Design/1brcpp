@@ -1,0 +1,100 @@
+Kumasi;22.2
+Phoenix;40.4
+Bouaké;18.3
+Edinburgh;27.4
+Burnie;-0.1
+Pretoria;22.9
+San José;24.9
+Parakou;23.1
+Antananarivo;22.6
+Palermo;14.4
+San Antonio;13.3
+Lake Havasu City;39.3
+Dunedin;14.8
+Dakar;8.5
+Baltimore;12.5
+Dampier;22.5
+Helsinki;7.8
+Bratislava;-0.7
+Singapore;39.8
+Las Palmas de Gran Canaria;34.0
+Lhasa;-1.4
+Wrocław;27.7
+Fresno;24.9
+Phnom Penh;16.4
+Panama City;39.6
+Winnipeg;-0.4
+Saint-Pierre;0.0
+Ahvaz;26.8
+Veracruz;36.7
+San Salvador;28.6
+Stockholm;15.8
+Ottawa;2.2
+Algiers;-4.2
+Baguio;23.2
+Anadyr;-15.6
+Mek'ele;27.9
+Marseille;11.0
+Alexandria;17.0
+Mumbai;12.2
+Kunming;20.5
+Darwin;6.7
+Bilbao;23.5
+Milwaukee;-12.4
+London;16.8
+Erzurum;20.0
+Lubumbashi;19.2
+Amsterdam;29.3
+San Antonio;17.9
+Boston;2.1
+Gabès;19.3
+Yerevan;17.8
+Chittagong;28.0
+Maun;17.3
+Santo Domingo;15.3
+Saint Petersburg;3.7
+Kuwait City;25.3
+Indianapolis;-4.0
+Tokyo;23.9
+Dublin;26.4
+Oklahoma City;20.8
+Port Vila;16.8
+Virginia Beach;0.8
+Gjoa Haven;-19.7
+Kampala;28.9
+Karachi;34.0
+Lagos;26.9
+Lake Tekapo;14.8
+Tamanrasset;15.1
+Rabat;-2.5
+New York City;31.0
+Ouahigouya;46.8
+Dunedin;29.8
+Pretoria;33.6
+Havana;5.0
+Dunedin;12.1
+Amsterdam;15.1
+Whitehorse;-5.5
+Detroit;20.5
+Reggane;32.2
+Sofia;5.6
+Cairns;27.4
+Abha;20.4
+Rangpur;36.7
+Lviv;8.6
+Irkutsk;8.6
+Kumasi;25.9
+Hamilton;3.8
+Whitehorse;-1.0
+Istanbul;28.3
+Tromsø;10.6
+Hargeisa;28.2
+Murmansk;15.2
+Ségou;27.3
+Lagos;25.8
+St. John's;12.2
+Timbuktu;21.0
+Colombo;28.8
+Lake Havasu City;29.0
+Birao;22.4
+Thessaloniki;11.9
