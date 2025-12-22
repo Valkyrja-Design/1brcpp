@@ -8,13 +8,14 @@
 #include <optional>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "cpphashmap.h"
 
 /**
  * One Billion Row Challenge.
@@ -29,7 +30,49 @@
  * - The file is processed in parallel using multiple threads, each handling a
  *   chunk of the file. Each thread maintains its own local statistics map which
  *   is later merged into a single map.
+ * - Uses a custom FxHasher for better performance with string keys.
+ * - Uses open addressing hash map implementation from `cpphashmap.h`.
  */
+
+// Stolen from rustc's FxHasher
+// `https://github.com/rust-lang/rustc-hash/blob/5e09ea0a1c7ab7e4f9e27771f5a0e5a36c58d1bb/src/lib.rs`
+struct FxHasher {
+  static constexpr std::size_t k = 0x517cc1b727220a95;
+
+  std::size_t operator()(std::string_view sv) const noexcept {
+    std::size_t hash = 0;
+
+    while (sv.size() >= sizeof(std::size_t)) {
+      add_to_hash(hash, *reinterpret_cast<const std::size_t *>(sv.data()));
+      sv.remove_prefix(sizeof(std::size_t));
+    }
+
+    if (sv.size() >= 4) {
+      add_to_hash(hash, *reinterpret_cast<const std::uint32_t *>(sv.data()));
+      sv.remove_prefix(4);
+    }
+
+    if (sv.size() >= 2) {
+      add_to_hash(hash, *reinterpret_cast<const std::uint16_t *>(sv.data()));
+      sv.remove_prefix(2);
+    }
+
+    if (sv.size() >= 1) {
+      add_to_hash(hash, static_cast<std::uint8_t>(sv[0]));
+    }
+
+    return hash;
+  }
+
+  void add_to_hash(std::size_t &hash, std::size_t i) const {
+    // Rotate left by 5
+    hash = (hash << 5) | (hash >> (sizeof(std::size_t) * 8 - 5));
+    // Xor with i
+    hash ^= i;
+    // Wrapping multiply
+    hash *= k;
+  }
+};
 
 std::int32_t parse_fixed_point(const char *s) {
   std::int32_t integer_part{};
@@ -106,6 +149,8 @@ std::ostream &operator<<(std::ostream &os, const StationStats &stats) {
   return os;
 }
 
+template <typename K, typename V> using FxHashMap = ethical::hash_map<K, V>;
+
 int process(int fd) {
   constexpr auto max_threads = 32;
   auto page_size = sysconf(_SC_PAGESIZE);
@@ -134,9 +179,9 @@ int process(int fd) {
   const char *file_end = static_cast<const char *>(file) + file_size;
   // std::mutex stdout_mutex{};
 
-  auto worker = [file_end](int i, const char *start, const char *end,
-                           std::unordered_map<std::string_view, StationStats>
-                               &local_stats) {
+  auto worker = [file_end](
+                    int i, const char *start, const char *end,
+                    FxHashMap<std::string_view, StationStats> &local_stats) {
     // If this is not the first chunk and we are in the middle of a line,
     // find the next newline
     if (i != 0 && start[-1] != '\n') {
@@ -165,7 +210,7 @@ int process(int fd) {
   };
 
   std::vector<std::thread> threads{};
-  std::vector<std::unordered_map<std::string_view, StationStats>> results{};
+  std::vector<FxHashMap<std::string_view, StationStats>> results{};
   auto chunk_size = file_size / nthreads;
   auto remainder = file_size % nthreads;
 
@@ -182,7 +227,7 @@ int process(int fd) {
   }
 
   // Collect results
-  std::unordered_map<std::string_view, StationStats> stats{};
+  FxHashMap<std::string_view, StationStats> stats{};
   for (auto i = 0u; i < nthreads; ++i) {
     threads[i].join();
 
@@ -195,7 +240,9 @@ int process(int fd) {
   std::vector<std::pair<std::string_view, StationStats>> sorted_stats;
 
   sorted_stats.reserve(stats.size());
-  sorted_stats.insert(sorted_stats.end(), stats.cbegin(), stats.cend());
+  for (const auto &stat : stats) {
+    sorted_stats.emplace_back(stat.first, stat.second);
+  }
   std::sort(sorted_stats.begin(), sorted_stats.end(),
             [](const auto &a, const auto &b) { return a.first < b.first; });
 
