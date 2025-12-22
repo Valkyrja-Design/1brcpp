@@ -1,13 +1,14 @@
+#include <algorithm>
 #include <charconv>
 #include <cinttypes>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <map>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <sys/file.h>
@@ -30,25 +31,25 @@
  *   is later merged into a single map.
  */
 
-std::int64_t parse_fixed_point(const char *s) {
-  std::int64_t integer_part{};
+std::int32_t parse_fixed_point(const char *s) {
+  std::int32_t integer_part{};
   bool negative = false;
 
   // The measurement is in the range [-99.9, 99.9] with exactly one decimal
-  // place Parse the integer part
+  // place
   if (*s == '-') {
     negative = true;
     ++s;
   }
 
-  integer_part = static_cast<std::int64_t>(*s++ - '0');
+  integer_part = static_cast<std::int32_t>(*s++ - '0');
   if (*s != '.') {
-    integer_part = integer_part * 10 + static_cast<std::int64_t>(*(s) - '0');
+    integer_part = integer_part * 10 + static_cast<std::int32_t>(*s - '0');
     ++s;
   }
 
   // We must now be at the decimal point
-  integer_part = integer_part * 10 + static_cast<std::int64_t>(*(s + 1) - '0');
+  integer_part = integer_part * 10 + static_cast<std::int32_t>(*(s + 1) - '0');
   if (negative) {
     integer_part = -integer_part;
   }
@@ -58,7 +59,7 @@ std::int64_t parse_fixed_point(const char *s) {
 
 struct Measurement {
   std::string_view station;
-  std::int64_t value;
+  std::int32_t value;
 
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
@@ -75,8 +76,8 @@ struct Measurement {
 };
 
 struct StationStats {
-  std::int64_t min{std::numeric_limits<std::int64_t>::max()};
-  std::int64_t max{std::numeric_limits<std::int64_t>::min()};
+  std::int32_t min{std::numeric_limits<std::int32_t>::max()};
+  std::int32_t max{std::numeric_limits<std::int32_t>::min()};
   std::int64_t sum{0};
   std::uint32_t count{0};
 
@@ -133,9 +134,9 @@ int process(int fd) {
   const char *file_end = static_cast<const char *>(file) + file_size;
   // std::mutex stdout_mutex{};
 
-  auto worker = [file_end](
-                    int i, const char *start, const char *end,
-                    std::map<std::string_view, StationStats> &local_stats) {
+  auto worker = [file_end](int i, const char *start, const char *end,
+                           std::unordered_map<std::string_view, StationStats>
+                               &local_stats) {
     // If this is not the first chunk and we are in the middle of a line,
     // find the next newline
     if (i != 0 && start[-1] != '\n') {
@@ -164,7 +165,7 @@ int process(int fd) {
   };
 
   std::vector<std::thread> threads{};
-  std::vector<std::map<std::string_view, StationStats>> results{};
+  std::vector<std::unordered_map<std::string_view, StationStats>> results{};
   auto chunk_size = file_size / nthreads;
   auto remainder = file_size % nthreads;
 
@@ -181,7 +182,7 @@ int process(int fd) {
   }
 
   // Collect results
-  std::map<std::string_view, StationStats> stats{};
+  std::unordered_map<std::string_view, StationStats> stats{};
   for (auto i = 0u; i < nthreads; ++i) {
     threads[i].join();
 
@@ -190,9 +191,17 @@ int process(int fd) {
     }
   }
 
-  auto end = stats.cend();
+  // Sort the results by station
+  std::vector<std::pair<std::string_view, StationStats>> sorted_stats;
+
+  sorted_stats.reserve(stats.size());
+  sorted_stats.insert(sorted_stats.end(), stats.cbegin(), stats.cend());
+  std::sort(sorted_stats.begin(), sorted_stats.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+
+  auto end = sorted_stats.cend();
   std::cout << "{\n";
-  for (auto it = stats.cbegin(); it != end; ++it) {
+  for (auto it = sorted_stats.cbegin(); it != end; ++it) {
     std::cout << "  " << it->first << "=" << it->second;
     if (std::next(it) != end) {
       std::cout << ',';
