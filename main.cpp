@@ -80,9 +80,12 @@ struct Measurement {
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
     auto delim_pos = line.length() - 1;
-    std::int16_t value{};
-    std::int16_t mult{1};
+    std::int16_t mult{10};
 
+    // Temperature value is of the form [-]DD.D
+    std::int16_t value{static_cast<std::int16_t>(line[delim_pos] - '0')};
+
+    delim_pos -= 2;
     while (line[delim_pos] != delimiter) {
       if (line[delim_pos] == '-') {
         value = -value;
@@ -90,11 +93,8 @@ struct Measurement {
         break;
       }
 
-      if (line[delim_pos] != '.') {
-        value += static_cast<std::int16_t>(line[delim_pos] - '0') * mult;
-        mult *= 10;
-      }
-
+      value += static_cast<std::int16_t>(line[delim_pos] - '0') * mult;
+      mult *= 10;
       --delim_pos;
     }
 
@@ -133,7 +133,8 @@ std::ostream &operator<<(std::ostream &os, const StationStats &stats) {
   return os;
 }
 
-template <typename K, typename V> using FxHashMap = std::unordered_map<K, V, FxHasher>;
+template <typename K, typename V>
+using FxHashMap = std::unordered_map<K, V, FxHasher>;
 
 int process(int fd) {
   constexpr auto max_threads = 1;
