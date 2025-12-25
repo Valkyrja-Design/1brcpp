@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <immintrin.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -72,47 +73,32 @@ struct FxHasher {
   }
 };
 
-std::int16_t parse_fixed_point(const char *s) {
-  std::int16_t integer_part{};
-  bool negative = false;
-
-  // The measurement is in the range [-99.9, 99.9] with exactly one decimal
-  // place
-  if (*s == '-') {
-    negative = true;
-    ++s;
-  }
-
-  integer_part = static_cast<std::int16_t>(*s++ - '0');
-  if (*s != '.') {
-    integer_part = integer_part * 10 + static_cast<std::int16_t>(*s - '0');
-    ++s;
-  }
-
-  // We must now be at the decimal point
-  integer_part = integer_part * 10 + static_cast<std::int16_t>(*(s + 1) - '0');
-  if (negative) {
-    integer_part = -integer_part;
-  }
-
-  return integer_part;
-}
-
 struct Measurement {
   std::string_view station;
   std::int16_t value;
 
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
-    // Minimum length of value is 4: "A;0.0"
-    auto delim_pos = line.length() - 4;
+    auto delim_pos = line.length() - 1;
+    std::int16_t value{};
+    std::int16_t mult{1};
 
     while (line[delim_pos] != delimiter) {
+      if (line[delim_pos] == '-') {
+        value = -value;
+        --delim_pos;
+        break;
+      }
+
+      if (line[delim_pos] != '.') {
+        value += static_cast<std::int16_t>(line[delim_pos] - '0') * mult;
+        mult *= 10;
+      }
+
       --delim_pos;
     }
 
-    return Measurement{line.substr(0, delim_pos),
-                       parse_fixed_point(line.data() + delim_pos + 1)};
+    return Measurement{line.substr(0, delim_pos), value};
   }
 };
 
@@ -147,8 +133,7 @@ std::ostream &operator<<(std::ostream &os, const StationStats &stats) {
   return os;
 }
 
-template <typename K, typename V>
-using FxHashMap = std::unordered_map<K, V, FxHasher>;
+template <typename K, typename V> using FxHashMap = std::unordered_map<K, V, FxHasher>;
 
 int process(int fd) {
   constexpr auto max_threads = 1;
@@ -173,18 +158,22 @@ int process(int fd) {
     std::cerr << "Error: Unable to map file to memory." << std::endl;
     return 1;
   }
-  madvise(file, file_size, MADV_SEQUENTIAL | MADV_WILLNEED);
+  madvise(file, file_size, MADV_SEQUENTIAL);
   close(fd);
 
-  const char *file_end = static_cast<const char *>(file) + file_size;
-  const char *start = static_cast<const char *>(file);
+  std::string_view file_view{static_cast<const char *>(file), file_size};
   const char *newline;
   FxHashMap<std::string_view, StationStats> stats{};
+  stats.reserve(10000);
 
-  while (start < file_end && (newline = static_cast<const char *>(std::memchr(
-                                  start, '\n', file_end - start))) != nullptr) {
-    std::string_view line{start, static_cast<std::size_t>(newline - start)};
-    start = newline + 1;
+  while ((newline = static_cast<const char *>(std::memchr(
+              file_view.data(), '\n', file_view.size()))) != nullptr) {
+    auto line = file_view.substr(0, newline - file_view.data());
+    if (line.empty()) {
+      break;
+    }
+
+    file_view.remove_prefix(line.size() + 1);
 
     Measurement m = Measurement::parse(line);
     stats[m.station] += m;
