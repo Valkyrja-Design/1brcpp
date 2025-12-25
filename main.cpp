@@ -8,14 +8,13 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "cpphashmap.h"
 
 /**
  * One Billion Row Challenge.
@@ -31,7 +30,6 @@
  *   chunk of the file. Each thread maintains its own local statistics map which
  *   is later merged into a single map.
  * - Uses a custom FxHasher for better performance with string keys.
- * - Uses open addressing hash map implementation from `cpphashmap.h`.
  */
 
 // Stolen from rustc's FxHasher
@@ -74,8 +72,8 @@ struct FxHasher {
   }
 };
 
-std::int32_t parse_fixed_point(const char *s) {
-  std::int32_t integer_part{};
+std::int16_t parse_fixed_point(const char *s) {
+  std::int16_t integer_part{};
   bool negative = false;
 
   // The measurement is in the range [-99.9, 99.9] with exactly one decimal
@@ -85,14 +83,14 @@ std::int32_t parse_fixed_point(const char *s) {
     ++s;
   }
 
-  integer_part = static_cast<std::int32_t>(*s++ - '0');
+  integer_part = static_cast<std::int16_t>(*s++ - '0');
   if (*s != '.') {
-    integer_part = integer_part * 10 + static_cast<std::int32_t>(*s - '0');
+    integer_part = integer_part * 10 + static_cast<std::int16_t>(*s - '0');
     ++s;
   }
 
   // We must now be at the decimal point
-  integer_part = integer_part * 10 + static_cast<std::int32_t>(*(s + 1) - '0');
+  integer_part = integer_part * 10 + static_cast<std::int16_t>(*(s + 1) - '0');
   if (negative) {
     integer_part = -integer_part;
   }
@@ -102,7 +100,7 @@ std::int32_t parse_fixed_point(const char *s) {
 
 struct Measurement {
   std::string_view station;
-  std::int32_t value;
+  std::int16_t value;
 
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
@@ -119,10 +117,10 @@ struct Measurement {
 };
 
 struct StationStats {
-  std::int32_t min{std::numeric_limits<std::int32_t>::max()};
-  std::int32_t max{std::numeric_limits<std::int32_t>::min()};
-  std::int64_t sum{0};
+  std::int16_t min{std::numeric_limits<std::int16_t>::max()};
+  std::int16_t max{std::numeric_limits<std::int16_t>::min()};
   std::uint32_t count{0};
+  std::int64_t sum{0};
 
   StationStats &operator+=(const Measurement &m) {
     min = std::min(min, m.value);
@@ -149,10 +147,11 @@ std::ostream &operator<<(std::ostream &os, const StationStats &stats) {
   return os;
 }
 
-template <typename K, typename V> using FxHashMap = ethical::hash_map<K, V>;
+template <typename K, typename V>
+using FxHashMap = std::unordered_map<K, V, FxHasher>;
 
 int process(int fd) {
-  constexpr auto max_threads = 32;
+  constexpr auto max_threads = 1;
   auto page_size = sysconf(_SC_PAGESIZE);
   auto nthreads =
       std::min<unsigned int>(std::thread::hardware_concurrency(), max_threads);
@@ -174,66 +173,21 @@ int process(int fd) {
     std::cerr << "Error: Unable to map file to memory." << std::endl;
     return 1;
   }
+  madvise(file, file_size, MADV_SEQUENTIAL | MADV_WILLNEED);
   close(fd);
 
   const char *file_end = static_cast<const char *>(file) + file_size;
-  // std::mutex stdout_mutex{};
-
-  auto worker = [file_end](
-                    int i, const char *start, const char *end,
-                    FxHashMap<std::string_view, StationStats> &local_stats) {
-    // If this is not the first chunk and we are in the middle of a line,
-    // find the next newline
-    if (i != 0 && start[-1] != '\n') {
-      start = static_cast<const char *>(std::memchr(start, '\n', end - start));
-      if (start == nullptr) {
-        return;
-      }
-      ++start;
-    }
-
-    const char *newline;
-
-    while (start < end && (newline = static_cast<const char *>(std::memchr(
-                               start, '\n', file_end - start))) != nullptr) {
-      std::string_view line{start, static_cast<std::size_t>(newline - start)};
-      start = newline + 1;
-
-      // {
-      //   std::lock_guard<std::mutex> lock(stdout_mutex);
-      //   std::cout << "Thread " << i << " Processing line: " << line <<
-      //   std::endl;
-      // }
-      Measurement m = Measurement::parse(line);
-      local_stats[m.station] += m;
-    }
-  };
-
-  std::vector<std::thread> threads{};
-  std::vector<FxHashMap<std::string_view, StationStats>> results{};
-  auto chunk_size = file_size / nthreads;
-  auto remainder = file_size % nthreads;
-
-  threads.resize(nthreads);
-  results.resize(nthreads);
-
-  for (auto i = 0u; i < nthreads; ++i) {
-    auto start = i * chunk_size;
-    auto size = chunk_size + (i == nthreads - 1 ? remainder : 0);
-
-    threads[i] = std::thread{worker, i, static_cast<const char *>(file) + start,
-                             static_cast<const char *>(file) + start + size,
-                             std::ref(results[i])};
-  }
-
-  // Collect results
+  const char *start = static_cast<const char *>(file);
+  const char *newline;
   FxHashMap<std::string_view, StationStats> stats{};
-  for (auto i = 0u; i < nthreads; ++i) {
-    threads[i].join();
 
-    for (const auto &[station, station_stats] : results[i]) {
-      stats[station] += station_stats;
-    }
+  while (start < file_end && (newline = static_cast<const char *>(std::memchr(
+                                  start, '\n', file_end - start))) != nullptr) {
+    std::string_view line{start, static_cast<std::size_t>(newline - start)};
+    start = newline + 1;
+
+    Measurement m = Measurement::parse(line);
+    stats[m.station] += m;
   }
 
   // Sort the results by station

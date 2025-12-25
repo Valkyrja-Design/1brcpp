@@ -1,7 +1,7 @@
 run: compile
 	./main
 compile: main.cpp
-	g++ --std=c++20 -o main main.cpp -O3
+	g++ --std=c++20 -o main main.cpp -O3 -flto -march=native -g -fno-omit-frame-pointer
 test: compile
 	./main testfiles/small.txt > output.txt
 	diff output.txt testfiles/small_expected.txt
