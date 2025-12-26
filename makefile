@@ -8,5 +8,7 @@ test: compile
 	rm output.txt
 fine: compile
 	hyperfine -w 2 './main ./measurements.txt'
+record: compile
+	perf record --call-graph dwarf -- ./main ./measurements.txt
 clean:
 	rm main

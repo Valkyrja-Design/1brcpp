@@ -79,8 +79,8 @@ struct Measurement {
     auto delim_pos = line.length() - 1;
 
     // Temperature value is of the form [-]DD.D
-    std::int16_t value{static_cast<std::int16_t>(line[delim_pos] - '0')};
-    value += static_cast<std::int16_t>(line[delim_pos - 2] - '0') * 10;
+    std::int16_t value{static_cast<std::int16_t>(
+        (line[delim_pos] - '0') + (line[delim_pos - 2] - '0') * 10)};
     delim_pos -= 3;
 
     if (line[delim_pos] != delimiter && line[delim_pos] != '-') {
