@@ -20,17 +20,14 @@
 /**
  * One Billion Row Challenge.
  *
- * - Uses `mmap` to map the file into memory for efficient access.
+ * - mmap the file into memory
  * - Since the measurement values are fixed-point doubles with exactly one
  *   decimal, we can use `int64_t` to store the values (multiplied by 10) and
- *   perform the division later when outputting the results.
+ *   perform the division later when outputting the results
  * - Handle written parser for measurement values since they lie in
- *   [-99.9, 99.9] range with exactly one decimal place.
- * - `memchr` is used to find line endings efficiently.
- * - The file is processed in parallel using multiple threads, each handling a
- *   chunk of the file. Each thread maintains its own local statistics map which
- *   is later merged into a single map.
- * - Uses a custom FxHasher for better performance with string keys.
+ *   [-99.9, 99.9] range with exactly one decimal place
+ * - memchr for finding newlines
+ * - FxHasher for hashing strings
  */
 
 // Stolen from rustc's FxHasher
@@ -80,21 +77,19 @@ struct Measurement {
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
     auto delim_pos = line.length() - 1;
-    std::int16_t mult{10};
 
     // Temperature value is of the form [-]DD.D
     std::int16_t value{static_cast<std::int16_t>(line[delim_pos] - '0')};
+    value += static_cast<std::int16_t>(line[delim_pos - 2] - '0') * 10;
+    delim_pos -= 3;
 
-    delim_pos -= 2;
-    while (line[delim_pos] != delimiter) {
-      if (line[delim_pos] == '-') {
-        value = -value;
-        --delim_pos;
-        break;
-      }
+    if (line[delim_pos] != delimiter && line[delim_pos] != '-') {
+      value += static_cast<std::int16_t>(line[delim_pos] - '0') * 100;
+      --delim_pos;
+    }
 
-      value += static_cast<std::int16_t>(line[delim_pos] - '0') * mult;
-      mult *= 10;
+    if (line[delim_pos] == '-') {
+      value = -value;
       --delim_pos;
     }
 
@@ -164,6 +159,8 @@ int process(int fd) {
 
   std::string_view file_view{static_cast<const char *>(file), file_size};
   const char *newline;
+  // TODO: Allocate keys on heap (and inline small strings) to prevent `mdavise`
+  // from being useless because of `string_view`s
   FxHashMap<std::string_view, StationStats> stats{};
   stats.reserve(10000);
 

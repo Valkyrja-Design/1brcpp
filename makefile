@@ -6,5 +6,7 @@ test: compile
 	./main testfiles/small.txt > output.txt
 	diff output.txt testfiles/small_expected.txt
 	rm output.txt
+fine: compile
+	hyperfine -w 2 './main ./measurements.txt'
 clean:
 	rm main
