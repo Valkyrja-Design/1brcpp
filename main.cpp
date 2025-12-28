@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <immintrin.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -166,13 +167,39 @@ int process(int fd) {
       ++start;
     }
 
-    while (start < end) {
-      const char *newline =
-          static_cast<const char *>(std::memchr(start, '\n', file_end - start));
+    while (start + 32 <= end) {
+      // SIMD on 32 bytes
+      __m256i bytes =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(start));
+      int mask = _mm256_movemask_epi8(
+          _mm256_cmpeq_epi8(bytes, _mm256_set1_epi8('\n')));
+      const char *newline = nullptr;
+
+      if (mask) {
+        newline = start + __builtin_ctz(mask);
+      } else {
+        start += 32;
+        continue;
+      }
+
       std::string_view line{start, static_cast<std::size_t>(newline - start)};
       start = newline + 1;
       Measurement m = Measurement::parse(line);
       local_stats[m.station] += m;
+    }
+
+    // Remaining bytes
+    while (start < end) {
+      const char *newline = start;
+      // Manually search for newline (avoids memchr function call overhead). The
+      // challenge promised a newline at the end of every line.
+      while (*newline != '\n')
+        ++newline;
+
+      std::string_view line{start, static_cast<std::size_t>(newline - start)};
+      Measurement m = Measurement::parse(line);
+      local_stats[m.station] += m;
+      start = newline + 1;
     }
   };
 
