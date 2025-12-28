@@ -1,17 +1,13 @@
 #include <algorithm>
-#include <charconv>
 #include <cinttypes>
 #include <cstring>
-#include <fstream>
 #include <iostream>
 #include <limits>
-#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
-#include <immintrin.h>
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -132,10 +128,8 @@ template <typename K, typename V>
 using FxHashMap = std::unordered_map<K, V, FxHasher>;
 
 int process(int fd) {
-  constexpr auto max_threads = 1;
   auto page_size = sysconf(_SC_PAGESIZE);
-  auto nthreads =
-      std::min<unsigned int>(std::thread::hardware_concurrency(), max_threads);
+  auto nthreads = std::thread::hardware_concurrency();
 
   struct stat file_stat {};
   if (fstat(fd, &file_stat) == -1) {
@@ -154,27 +148,60 @@ int process(int fd) {
     std::cerr << "Error: Unable to map file to memory." << std::endl;
     return 1;
   }
-  madvise(file, file_size, MADV_SEQUENTIAL);
+  madvise(file, file_size, MADV_SEQUENTIAL | MADV_WILLNEED);
   close(fd);
 
-  std::string_view file_view{static_cast<const char *>(file), file_size};
-  const char *newline;
-  // TODO: Allocate keys on heap (and inline small strings) to prevent `mdavise`
-  // from being useless because of `string_view`s
-  FxHashMap<std::string_view, StationStats> stats{};
-  stats.reserve(10000);
+  const char *file_end = static_cast<const char *>(file) + file_size;
 
-  while ((newline = static_cast<const char *>(std::memchr(
-              file_view.data(), '\n', file_view.size()))) != nullptr) {
-    auto line = file_view.substr(0, newline - file_view.data());
-    if (line.empty()) {
-      break;
+  auto worker = [file_end](
+                    int i, const char *start, const char *end,
+                    FxHashMap<std::string_view, StationStats> &local_stats) {
+    // If this is not the first chunk and we are in the middle of a line,
+    // find the next newline
+    if (i != 0 && start[-1] != '\n') {
+      start = static_cast<const char *>(std::memchr(start, '\n', end - start));
+      if (start == nullptr) {
+        return;
+      }
+      ++start;
     }
 
-    file_view.remove_prefix(line.size() + 1);
+    while (start < end) {
+      const char *newline =
+          static_cast<const char *>(std::memchr(start, '\n', file_end - start));
+      std::string_view line{start, static_cast<std::size_t>(newline - start)};
+      start = newline + 1;
+      Measurement m = Measurement::parse(line);
+      local_stats[m.station] += m;
+    }
+  };
 
-    Measurement m = Measurement::parse(line);
-    stats[m.station] += m;
+  std::vector<std::thread> threads{};
+  std::vector<FxHashMap<std::string_view, StationStats>> results{};
+  auto chunk_size = file_size / nthreads;
+  auto remainder = file_size % nthreads;
+
+  threads.resize(nthreads);
+  results.resize(nthreads);
+
+  for (auto i = 0u; i < nthreads; ++i) {
+    auto start = i * chunk_size;
+    auto size = chunk_size + (i == nthreads - 1 ? remainder : 0);
+
+    results[i].reserve(1 << 14);
+    threads[i] = std::thread{worker, i, static_cast<const char *>(file) + start,
+                             static_cast<const char *>(file) + start + size,
+                             std::ref(results[i])};
+  }
+
+  // Collect results
+  FxHashMap<std::string_view, StationStats> stats{};
+  for (auto i = 0u; i < nthreads; ++i) {
+    threads[i].join();
+
+    for (const auto &[station, station_stats] : results[i]) {
+      stats[station] += station_stats;
+    }
   }
 
   // Sort the results by station
