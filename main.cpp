@@ -75,6 +75,7 @@ struct Measurement {
 
   // Assumes the line is at least 32 bytes long
   static Measurement parse_simd(std::string_view line) {
+    // Credit: https://curiouscoding.nl/posts/1brc/
     constexpr auto delimiter = ';';
 
     // Find the delimiter position
