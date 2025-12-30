@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -166,8 +167,8 @@ struct StationStats {
 };
 
 std::ostream &operator<<(std::ostream &os, const StationStats &stats) {
-  os << (stats.min / 10.0f) << '/' << (stats.max / 10.0f) << '/'
-     << (stats.sum / (10.0f * stats.count));
+  os << std::setprecision(1) << std::fixed << (stats.min / 10.0f) << '/'
+     << (stats.max / 10.0f) << '/' << (stats.sum / (10.0f * stats.count));
   return os;
 }
 
@@ -219,19 +220,17 @@ int process(int fd) {
           _mm256_loadu_si256(reinterpret_cast<const __m256i *>(start));
       int mask = _mm256_movemask_epi8(
           _mm256_cmpeq_epi8(bytes, _mm256_set1_epi8('\n')));
-      const char *newline = nullptr;
 
-      if (mask) {
-        newline = start + __builtin_ctz(mask);
-      } else {
+      if (mask == 0) {
         start += 32;
         continue;
       }
 
+      const char *newline = start + __builtin_ctz(mask);
       Measurement m = Measurement::parse_simd(
           {start, static_cast<std::size_t>(newline - start)});
-      start = newline + 1;
       local_stats[m.station] += m;
+      start = newline + 1;
     }
 
     // Remaining bytes
@@ -242,8 +241,8 @@ int process(int fd) {
       while (*newline != '\n')
         ++newline;
 
-      std::string_view line{start, static_cast<std::size_t>(newline - start)};
-      Measurement m = Measurement::parse(line);
+      Measurement m = Measurement::parse(
+          {start, static_cast<std::size_t>(newline - start)});
       local_stats[m.station] += m;
       start = newline + 1;
     }
