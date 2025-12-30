@@ -23,11 +23,12 @@
  *   perform the division later when outputting the results
  * - Handle written parser for measurement values since they lie in
  *   [-99.9, 99.9] range with exactly one decimal place
- * - memchr for finding newlines
+ * - SIMD for finding newlines
  * - FxHasher for hashing strings
+ * - Branchless temperature value parsing
  */
 
-// Stolen from rustc's FxHasher
+// rustc's FxHasher
 // `https://github.com/rust-lang/rustc-hash/blob/5e09ea0a1c7ab7e4f9e27771f5a0e5a36c58d1bb/src/lib.rs`
 struct FxHasher {
   static constexpr std::size_t k = 0x517cc1b727220a95;
@@ -70,6 +71,51 @@ struct FxHasher {
 struct Measurement {
   std::string_view station;
   std::int16_t value;
+
+  // Assumes the line is at least 32 bytes long
+  static Measurement parse_simd(std::string_view line) {
+    constexpr auto delimiter = ';';
+
+    // Find the delimiter position
+    __m256i bytes =
+        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(line.data()));
+    int mask = _mm256_movemask_epi8(
+        _mm256_cmpeq_epi8(bytes, _mm256_set1_epi8(delimiter)));
+    int delim_pos = __builtin_ctz(mask);
+    int pos = delim_pos + 1;
+    int sign = line[pos] == '-' ? -1 : 1;
+    pos += line[pos] == '-';
+
+    // Reads `bc.d` or `c.d?`
+    std::uint32_t value{};
+    std::memcpy(&value, line.data() + pos, 4);
+
+    // Remove `?`
+    value <<= 8 * (4 - (line.size() - pos));
+
+    // Convert ascii to their integer values. ascii digits have the upper 4 bits
+    // as 0b0011
+    value &= 0x0f000f0f;
+
+    // value is now
+    //                       0d    00    0c    0b
+    //                        d     0     c     d  | * 1
+    //         10d     0    10c   10b              | * 10 << 16
+    //   100d    0  100c   100b                    | * 100 << 24
+    //   100d  10d  100c   want   10b    c     d   | sum
+    // The sum we need is at the 4th byte but since the max value of sum 999 >
+    // 256 it won't fit in that byte alone. The cool thing to notice is that the
+    // adjacent byte (100c) is always divisible by 4 and so its last 2 bits are
+    // always 0. Therefore, we can take those 2 bits and our bytes == 10 bits
+    // which can easily fit in all the valid values
+    constexpr uint64_t c = 1 + (10 << 16) + (100 << 24);
+    // Take the lower 10 digits after multiplication
+    value = ((value * c) >> 24) & ((1 << 10) - 1);
+
+    return Measurement{
+        line.substr(0, delim_pos),
+        static_cast<std::int16_t>(sign * static_cast<int>(value))};
+  }
 
   static Measurement parse(std::string_view line) {
     constexpr auto delimiter = ';';
@@ -182,9 +228,9 @@ int process(int fd) {
         continue;
       }
 
-      std::string_view line{start, static_cast<std::size_t>(newline - start)};
+      Measurement m = Measurement::parse_simd(
+          {start, static_cast<std::size_t>(newline - start)});
       start = newline + 1;
-      Measurement m = Measurement::parse(line);
       local_stats[m.station] += m;
     }
 
